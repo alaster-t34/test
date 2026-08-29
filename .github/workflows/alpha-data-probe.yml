@@ -21,29 +21,41 @@ jobs:
       - name: Build clean long panel
         run: |
           python - <<'PY'
-          import pandas as pd
-          p='/tmp/sp500_stocks.csv'
-          df=pd.read_csv(p)
-          df['Date']=pd.to_datetime(df['Date'], errors='coerce')
-          for c in ['Close','Volume']:
-              df[c]=pd.to_numeric(df[c], errors='coerce')
-          df=df.dropna(subset=['Date','Symbol','Close','Volume']).copy()
-          df=df[df['Close']>0]
-          df=df[df['Volume']>=0]
-          counts=df.groupby('Symbol')['Date'].nunique().sort_values(ascending=False)
-          keep=counts[counts>=180].index
-          df=df[df['Symbol'].isin(keep)]
-          out=df[['Date','Symbol','Close','Volume']].rename(columns={'Date':'date','Symbol':'asset','Close':'close','Volume':'volume'})
-          out=out.sort_values(['date','asset'])
-          out.to_csv('/tmp/market.csv',index=False)
-          print('CLEAN_ROWS',len(out))
-          print('ASSETS',out['asset'].nunique())
-          print('DATES',out['date'].nunique())
-          print('DATE_MIN',out['date'].min())
-          print('DATE_MAX',out['date'].max())
-          print('TOP_COUNTS')
-          print(counts.head(20).to_string())
-          print(out.head().to_string(index=False))
+          import csv
+          from collections import Counter
+          from datetime import datetime
+          rows=[]
+          counts=Counter()
+          with open('/tmp/sp500_stocks.csv', newline='', encoding='utf-8-sig') as f:
+              r=csv.DictReader(f)
+              for x in r:
+                  try:
+                      if not x.get('Date') or not x.get('Symbol') or not x.get('Close') or not x.get('Volume'):
+                          continue
+                      dt=datetime.strptime(x['Date'],'%m/%d/%Y').date().isoformat()
+                      close=float(x['Close']); volume=float(x['Volume'])
+                      if close<=0 or volume<0:
+                          continue
+                  except Exception:
+                      continue
+                  sym=x['Symbol'].strip()
+                  rows.append((dt,sym,close,volume))
+                  counts[sym]+=1
+          keep={s for s,n in counts.items() if n>=180}
+          rows=[z for z in rows if z[1] in keep]
+          rows.sort(key=lambda z:(z[0],z[1]))
+          with open('/tmp/market.csv','w',newline='',encoding='utf-8') as f:
+              w=csv.writer(f)
+              w.writerow(['date','asset','close','volume'])
+              w.writerows(rows)
+          dates={z[0] for z in rows}
+          print('CLEAN_ROWS',len(rows))
+          print('ASSETS',len(keep))
+          print('DATES',len(dates))
+          print('DATE_MIN',min(dates) if dates else None)
+          print('DATE_MAX',max(dates) if dates else None)
+          print('TOP_COUNTS',counts.most_common(20))
+          print('FIRST_ROWS',rows[:5])
           PY
 
       - name: Upload cleaned panel
