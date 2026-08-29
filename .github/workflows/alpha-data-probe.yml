@@ -1,0 +1,51 @@
+name: Alpha Data Probe
+
+on:
+  push:
+    paths:
+      - '.github/workflows/alpha-data-probe.yml'
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download candidate cross-sectional dataset
+        run: |
+          set -euxo pipefail
+          curl -L --retry 3 --fail \
+            https://raw.githubusercontent.com/ss6708/Stock-Analyzer-Graphing-Tool/main/sp500_stocks.csv \
+            -o /tmp/sp500_stocks.csv
+          ls -lh /tmp/sp500_stocks.csv
+          wc -l /tmp/sp500_stocks.csv
+          head -n 3 /tmp/sp500_stocks.csv
+          tail -n 3 /tmp/sp500_stocks.csv
+
+      - name: Inspect schema and coverage
+        run: |
+          python - <<'PY'
+          import csv
+          from collections import Counter
+          p='/tmp/sp500_stocks.csv'
+          with open(p, newline='', encoding='utf-8-sig') as f:
+              r=csv.DictReader(f)
+              print('FIELDS', r.fieldnames)
+              n=0; symbols=set(); dates=[]; nonempty=Counter()
+              samples=[]
+              for row in r:
+                  n+=1
+                  if len(samples)<3: samples.append(row)
+                  sym=row.get('Symbol') or row.get('symbol') or row.get('Ticker') or row.get('Name')
+                  dt=row.get('Date') or row.get('date')
+                  if sym: symbols.add(sym)
+                  if dt: dates.append(dt)
+                  for k,v in row.items():
+                      if v not in (None,''): nonempty[k]+=1
+              print('ROWS', n)
+              print('SYMBOLS', len(symbols))
+              print('DATE_MIN', min(dates) if dates else None)
+              print('DATE_MAX', max(dates) if dates else None)
+              print('NONEMPTY', dict(nonempty))
+              print('SAMPLES', samples)
+          PY
