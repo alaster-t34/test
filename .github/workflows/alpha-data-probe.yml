@@ -9,58 +9,81 @@ on:
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
-      - name: Download candidate cross-sectional dataset
+      - name: Download recent candidate panel
         run: |
           set -euxo pipefail
           curl -L --retry 3 --fail \
             https://raw.githubusercontent.com/ss6708/Stock-Analyzer-Graphing-Tool/main/sp500_stocks.csv \
-            -o /tmp/sp500_stocks.csv
+            -o /tmp/sp500_recent.csv
 
-      - name: Build clean long panel
+      - name: Download five-year S&P panel
+        run: |
+          set -euxo pipefail
+          curl -L --retry 3 --fail \
+            https://raw.githubusercontent.com/learning-fintech/data/main/stocks/all_stocks_5yr.csv.gz \
+            -o /tmp/all_stocks_5yr.csv.gz
+          gzip -t /tmp/all_stocks_5yr.csv.gz
+          zcat /tmp/all_stocks_5yr.csv.gz | head -n 3 || true
+
+      - name: Build clean recent panel
         run: |
           python - <<'PY'
           import csv
           from collections import Counter
           from datetime import datetime
-          rows=[]
-          counts=Counter()
-          with open('/tmp/sp500_stocks.csv', newline='', encoding='utf-8-sig') as f:
+          rows=[]; counts=Counter()
+          with open('/tmp/sp500_recent.csv', newline='', encoding='utf-8-sig') as f:
               r=csv.DictReader(f)
               for x in r:
                   try:
-                      if not x.get('Date') or not x.get('Symbol') or not x.get('Close') or not x.get('Volume'):
-                          continue
+                      if not x.get('Date') or not x.get('Symbol') or not x.get('Close') or not x.get('Volume'): continue
                       dt=datetime.strptime(x['Date'],'%m/%d/%Y').date().isoformat()
                       close=float(x['Close']); volume=float(x['Volume'])
-                      if close<=0 or volume<0:
-                          continue
-                  except Exception:
-                      continue
-                  sym=x['Symbol'].strip()
-                  rows.append((dt,sym,close,volume))
-                  counts[sym]+=1
+                      if close<=0 or volume<0: continue
+                  except Exception: continue
+                  sym=x['Symbol'].strip(); rows.append((dt,sym,close,volume)); counts[sym]+=1
           keep={s for s,n in counts.items() if n>=180}
-          rows=[z for z in rows if z[1] in keep]
-          rows.sort(key=lambda z:(z[0],z[1]))
-          with open('/tmp/market.csv','w',newline='',encoding='utf-8') as f:
-              w=csv.writer(f)
-              w.writerow(['date','asset','close','volume'])
-              w.writerows(rows)
+          rows=[z for z in rows if z[1] in keep]; rows.sort(key=lambda z:(z[0],z[1]))
+          with open('/tmp/market_recent.csv','w',newline='',encoding='utf-8') as f:
+              w=csv.writer(f); w.writerow(['date','asset','close','volume']); w.writerows(rows)
           dates={z[0] for z in rows}
-          print('CLEAN_ROWS',len(rows))
-          print('ASSETS',len(keep))
-          print('DATES',len(dates))
-          print('DATE_MIN',min(dates) if dates else None)
-          print('DATE_MAX',max(dates) if dates else None)
-          print('TOP_COUNTS',counts.most_common(20))
-          print('FIRST_ROWS',rows[:5])
+          print('RECENT rows/assets/dates',len(rows),len(keep),len(dates),min(dates),max(dates))
           PY
 
-      - name: Upload cleaned panel
+      - name: Build clean five-year panel
+        run: |
+          python - <<'PY'
+          import csv,gzip
+          from collections import Counter
+          rows=[]; counts=Counter()
+          with gzip.open('/tmp/all_stocks_5yr.csv.gz','rt',newline='',encoding='utf-8-sig') as f:
+              r=csv.DictReader(f)
+              print('HIST_FIELDS',r.fieldnames)
+              for x in r:
+                  try:
+                      dt=(x.get('date') or x.get('Date') or '').strip()
+                      sym=(x.get('Name') or x.get('Symbol') or x.get('symbol') or '').strip()
+                      close=float(x.get('close') or x.get('Close') or '')
+                      volume=float(x.get('volume') or x.get('Volume') or '')
+                      if not dt or not sym or close<=0 or volume<0: continue
+                  except Exception: continue
+                  rows.append((dt,sym,close,volume)); counts[sym]+=1
+          keep={s for s,n in counts.items() if n>=800}
+          rows=[z for z in rows if z[1] in keep]; rows.sort(key=lambda z:(z[0],z[1]))
+          with open('/tmp/market_hist.csv','w',newline='',encoding='utf-8') as f:
+              w=csv.writer(f); w.writerow(['date','asset','close','volume']); w.writerows(rows)
+          dates={z[0] for z in rows}
+          print('HIST rows/assets/dates',len(rows),len(keep),len(dates),min(dates) if dates else None,max(dates) if dates else None)
+          print('HIST top counts',counts.most_common(10))
+          PY
+
+      - name: Upload panels
         uses: actions/upload-artifact@v4
         with:
-          name: alpha-market-panel
-          path: /tmp/market.csv
+          name: alpha-market-panels
+          path: |
+            /tmp/market_recent.csv
+            /tmp/market_hist.csv
           retention-days: 1
